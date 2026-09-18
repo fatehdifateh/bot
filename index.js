@@ -1,4 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
+const { execSync } = require('child_process');
+const AdmZip = require('adm-zip');
+const fs = require('fs');
 
 const client = new Client({
   intents: [
@@ -8,28 +11,53 @@ const client = new Client({
   ],
 });
 
-// Sadece belirli kanalda çalışsın istersen kanal ID'sini yaz, hepsinde çalışsın istersen boş bırak
 const KANAL_ID = '';
+const DISCORD_LINK = 'https://discord.gg/EMPU2dbcpt';
+const COMMENT_TEXT = `nosignalpack\n${DISCORD_LINK}`;
+const COUNTER_FILE = 'counter.txt';
+
+// Sayaç yükle
+let packCounter = 1;
+if (fs.existsSync(COUNTER_FILE)) {
+  packCounter = parseInt(fs.readFileSync(COUNTER_FILE, 'utf8').trim()) || 1;
+}
+function saveCounter() {
+  fs.writeFileSync(COUNTER_FILE, packCounter.toString());
+}
 
 client.once('ready', () => {
-  console.log(`${client.user.tag} olarak giriş yapıldı!`);
+  console.log(`✅ ${client.user.tag} giriş yaptı!`);
 });
 
-// Dosyaları indirip buffer olarak hazırlar
-async function dosyalariHazirla(liste) {
-  const files = [];
-  for (const a of liste) {
-    try {
-      const res = await fetch(a.url);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const buf = Buffer.from(await res.arrayBuffer());
-      const isim = a.name || a.url.split('?')[0].split('/').pop() || 'dosya';
-      files.push({ attachment: buf, name: isim });
-    } catch (e) {
-      console.error('Dosya indirilemedi:', a.url, e.message);
-    }
+// RAR comment ekle (linux rar komutu gerekli)
+async function processRar(buffer, num) {
+  const tempPath = `/tmp/nosignalpack${num}_in.rar`;
+  const commentPath = `/tmp/comment${num}.txt`;
+  fs.writeFileSync(tempPath, buffer);
+  fs.writeFileSync(commentPath, COMMENT_TEXT);
+  try {
+    execSync(`rar c -z"${commentPath}" "${tempPath}"`, { stdio: 'pipe' });
+  } catch (e) {
+    console.error('RAR comment hatası:', e.message);
   }
-  return files;
+  const result = fs.readFileSync(tempPath);
+  fs.unlinkSync(tempPath);
+  fs.unlinkSync(commentPath);
+  return result;
+}
+
+// ZIP comment ekle
+async function processZip(buffer) {
+  const zip = new AdmZip(buffer);
+  zip.addZipComment(COMMENT_TEXT);
+  return zip.toBuffer();
+}
+
+// Dosyaları URL'den indir
+async function downloadFile(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return Buffer.from(await res.arrayBuffer());
 }
 
 client.on('messageCreate', async (msg) => {
@@ -37,65 +65,111 @@ client.on('messageCreate', async (msg) => {
   if (!msg.guild) return;
   if (KANAL_ID && msg.channel.id !== KANAL_ID) return;
 
-  let content = msg.content || '';
-  let attachments = [...msg.attachments.values()];
-  let embeds = [];
+  // ==========================================
+  // !deyiş <sayı> komutu
+  // ==========================================
+  if (msg.content.startsWith('!deyiş')) {
+    const parts = msg.content.trim().split(/\s+/);
+    const count = parseInt(parts[1]) || 10;
+
+    await msg.delete().catch(() => {});
+
+    // Son mesajları çek (bot olmayanları)
+    const fetched = await msg.channel.messages.fetch({ limit: 100 });
+    const nonBotMsgs = [...fetched.values()]
+      .filter(m => !m.author.bot)
+      .slice(0, count)
+      .reverse(); // eskiden yeniye sırala
+
+    for (const m of nonBotMsgs) {
+      const content = m.content || '';
+      const attachments = [...m.attachments.values()];
+      const files = [];
+
+      for (const a of attachments) {
+        try {
+          const buf = await downloadFile(a.url);
+          const name = a.name || 'dosya';
+          const isRar = name.toLowerCase().endsWith('.rar');
+          const isZip = name.toLowerCase().endsWith('.zip');
+
+          if (isRar) {
+            const processed = await processRar(buf, packCounter);
+            files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
+            packCounter++; saveCounter();
+          } else if (isZip) {
+            const processed = await processZip(buf);
+            files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
+            packCounter++; saveCounter();
+          } else {
+            files.push({ attachment: buf, name });
+          }
+        } catch (e) {
+          console.error('Dosya hatası:', e.message);
+        }
+      }
+
+      await m.delete().catch(() => {});
+
+      if (content || files.length > 0) {
+        await msg.channel.send({
+          content: content || undefined,
+          files: files.length > 0 ? files : undefined,
+          allowedMentions: { parse: [] },
+        }).catch(e => console.error('Gönderim hatası:', e.message));
+      }
+    }
+    return;
+  }
+
+  // ==========================================
+  // Normal mesaj - RAR/ZIP varsa işle
+  // ==========================================
+  const content = msg.content || '';
+  const attachments = [...msg.attachments.values()];
   const linkler = [];
 
-  // İletilen mesajsa asıl içerik snapshot'ın içinde
-  const snapshot = msg.messageSnapshots?.first();
-  if (snapshot) {
-    content = '✔ **Gönderildi**' + (snapshot.content ? '\n' + snapshot.content : '');
-    attachments = [...(snapshot.attachments?.values() ?? [])];
+  if (!content && attachments.length === 0) return;
 
-    for (const e of snapshot.embeds ?? []) {
-      const tip = e.data?.type;
-      if (tip === 'rich') embeds.push(e);
-      else if (['image', 'gifv', 'video'].includes(tip) && e.url) linkler.push(e.url);
+  const files = [];
+  for (const a of attachments) {
+    try {
+      const buf = await downloadFile(a.url);
+      const name = a.name || 'dosya';
+      const isRar = name.toLowerCase().endsWith('.rar');
+      const isZip = name.toLowerCase().endsWith('.zip');
+
+      if (isRar) {
+        const processed = await processRar(buf, packCounter);
+        files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
+        packCounter++; saveCounter();
+      } else if (isZip) {
+        const processed = await processZip(buf);
+        files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
+        packCounter++; saveCounter();
+      } else {
+        files.push({ attachment: buf, name });
+      }
+    } catch (e) {
+      console.error('Dosya indirilemedi:', e.message);
+      linkler.push(a.url);
     }
   }
 
-  console.log(
-    `Mesaj alındı | iletilen: ${!!snapshot} | dosya: ${attachments.length} | embed: ${embeds.length}`
-  );
-
-  if (!content && attachments.length === 0 && embeds.length === 0 && linkler.length === 0) return;
+  const metin = [content, ...linkler].filter(Boolean).join('\n');
 
   try {
-    const files = await dosyalariHazirla(attachments);
-
-    // İndirilemeyen dosyalar link olarak eklensin
-    if (files.length < attachments.length) {
-      const inenler = new Set(files.map((f) => f.name));
-      for (const a of attachments) {
-        if (!inenler.has(a.name)) linkler.push(a.url);
-      }
-    }
-
-    const metin = [content, ...linkler].filter(Boolean).join('\n');
-
-    try {
-      await msg.channel.send({
-        content: metin.slice(0, 2000) || undefined,
-        files,
-        embeds,
-        allowedMentions: { parse: [] },
-      });
-    } catch (err) {
-      // Dosyalı gönderim başarısız olursa hepsini link olarak gönder
-      console.error('Dosyalı gönderim hatası:', err.message);
-      const yedek = [content, ...attachments.map((a) => a.url), ...linkler]
-        .filter(Boolean)
-        .join('\n');
-      await msg.channel.send({
-        content: yedek.slice(0, 2000),
-        allowedMentions: { parse: [] },
-      });
-    }
-
+    await msg.channel.send({
+      content: metin.slice(0, 2000) || undefined,
+      files: files.length > 0 ? files : undefined,
+      allowedMentions: { parse: [] },
+    });
     await msg.delete();
-  } catch (err) {
-    console.error('Hata:', err);
+  } catch (e) {
+    console.error('Gönderim hatası:', e.message);
+    const yedek = [content, ...attachments.map(a => a.url)].filter(Boolean).join('\n');
+    await msg.channel.send({ content: yedek.slice(0, 2000), allowedMentions: { parse: [] } });
+    await msg.delete().catch(() => {});
   }
 });
 
