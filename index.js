@@ -27,7 +27,7 @@ client.on('messageCreate', async (msg) => {
   // İletilen mesajsa asıl içerik snapshot'ın içinde
   const snapshot = msg.messageSnapshots?.first();
   if (snapshot) {
-    content = '↪️ **İletildi**\n' + (snapshot.content || '');
+    content = '✔ **GONDERILDI**\n' + (snapshot.content || '');
     attachments = [...snapshot.attachments.values()];
     embeds = [...snapshot.embeds].filter((e) => e.data.type === 'rich');
   }
