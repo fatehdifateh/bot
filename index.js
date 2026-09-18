@@ -29,7 +29,7 @@ client.once('ready', () => {
   console.log(`✅ ${client.user.tag} giriş yaptı!`);
 });
 
-// RAR comment ekle (linux rar komutu gerekli)
+// RAR comment ekle
 async function processRar(buffer, num) {
   const tempPath = `/tmp/nosignalpack${num}_in.rar`;
   const commentPath = `/tmp/comment${num}.txt`;
@@ -60,6 +60,30 @@ async function downloadFile(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
+// Tekil eklenti işleyici
+async function processAttachment(a) {
+  const buf = await downloadFile(a.url);
+  const name = a.name || 'dosya';
+  const isRar = name.toLowerCase().endsWith('.rar');
+  const isZip = name.toLowerCase().endsWith('.zip');
+
+  if (isRar) {
+    const processed = await processRar(buf, packCounter);
+    const fileName = `nosignalpack${packCounter}.rar`;
+    packCounter++;
+    saveCounter();
+    return { attachment: processed, name: fileName };
+  } else if (isZip) {
+    const processed = await processZip(buf);
+    const fileName = `nosignalpack${packCounter}.zip`;
+    packCounter++;
+    saveCounter();
+    return { attachment: processed, name: fileName };
+  } else {
+    return { attachment: buf, name };
+  }
+}
+
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   if (!msg.guild) return;
@@ -74,103 +98,65 @@ client.on('messageCreate', async (msg) => {
 
     await msg.delete().catch(() => {});
 
-    // Son mesajları çek (bot olmayanları)
     const fetched = await msg.channel.messages.fetch({ limit: 100 });
     const nonBotMsgs = [...fetched.values()]
       .filter(m => !m.author.bot)
       .slice(0, count)
-      .reverse(); // eskiden yeniye sırala
+      .reverse();
 
     for (const m of nonBotMsgs) {
-      const content = m.content || '';
-      const attachments = [...m.attachments.values()];
-      const files = [];
-
-      for (const a of attachments) {
-        try {
-          const buf = await downloadFile(a.url);
-          const name = a.name || 'dosya';
-          const isRar = name.toLowerCase().endsWith('.rar');
-          const isZip = name.toLowerCase().endsWith('.zip');
-
-          if (isRar) {
-            const processed = await processRar(buf, packCounter);
-            files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
-            packCounter++; saveCounter();
-          } else if (isZip) {
-            const processed = await processZip(buf);
-            files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
-            packCounter++; saveCounter();
-          } else {
-            files.push({ attachment: buf, name });
-          }
-        } catch (e) {
-          console.error('Dosya hatası:', e.message);
-        }
-      }
-
-      await m.delete().catch(() => {});
-
-      if (content || files.length > 0) {
-        await msg.channel.send({
-          content: content || undefined,
-          files: files.length > 0 ? files : undefined,
-          allowedMentions: { parse: [] },
-        }).catch(e => console.error('Gönderim hatası:', e.message));
-      }
+      await handleMessageProcessing(m);
     }
     return;
   }
 
   // ==========================================
-  // Normal mesaj - RAR/ZIP varsa işle
+  // Normal mesaj akışı
   // ==========================================
+  await handleMessageProcessing(msg);
+});
+
+// Mesaj ve eklentileri tek tek/sırayla işleyen ana fonksiyon
+async function handleMessageProcessing(msg) {
   const content = msg.content || '';
   const attachments = [...msg.attachments.values()];
-  const linkler = [];
 
   if (!content && attachments.length === 0) return;
 
-  const files = [];
+  // Eklenti yoksa sadece metni gönder
+  if (attachments.length === 0) {
+    await msg.channel.send({
+      content: content.slice(0, 2000),
+      allowedMentions: { parse: [] },
+    }).catch(e => console.error('Metin gönderme hatası:', e.message));
+    await msg.delete().catch(() => {});
+    return;
+  }
+
+  // Birden fazla eklenti varsa her birini ayrı bir mesaj olarak gönderir (Hata oluşmasını engeller)
+  let isFirst = true;
   for (const a of attachments) {
     try {
-      const buf = await downloadFile(a.url);
-      const name = a.name || 'dosya';
-      const isRar = name.toLowerCase().endsWith('.rar');
-      const isZip = name.toLowerCase().endsWith('.zip');
-
-      if (isRar) {
-        const processed = await processRar(buf, packCounter);
-        files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
-        packCounter++; saveCounter();
-      } else if (isZip) {
-        const processed = await processZip(buf);
-        files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
-        packCounter++; saveCounter();
-      } else {
-        files.push({ attachment: buf, name });
-      }
+      const fileData = await processAttachment(a);
+      await msg.channel.send({
+        content: isFirst && content ? content.slice(0, 2000) : undefined,
+        files: [fileData],
+        allowedMentions: { parse: [] },
+      });
+      isFirst = false; // Metin ilk eklenti ile gittiği için sonrakilerde tekrar yazmaz
     } catch (e) {
-      console.error('Dosya indirilemedi:', e.message);
-      linkler.push(a.url);
+      console.error('Eklenti işleme/gönderme hatası:', e.message);
+      // Hata durumunda doğrudan orijinal linki atar
+      await msg.channel.send({
+        content: (isFirst && content ? content + '\n' : '') + a.url,
+        allowedMentions: { parse: [] },
+      }).catch(() => {});
+      isFirst = false;
     }
   }
 
-  const metin = [content, ...linkler].filter(Boolean).join('\n');
-
-  try {
-    await msg.channel.send({
-      content: metin.slice(0, 2000) || undefined,
-      files: files.length > 0 ? files : undefined,
-      allowedMentions: { parse: [] },
-    });
-    await msg.delete();
-  } catch (e) {
-    console.error('Gönderim hatası:', e.message);
-    const yedek = [content, ...attachments.map(a => a.url)].filter(Boolean).join('\n');
-    await msg.channel.send({ content: yedek.slice(0, 2000), allowedMentions: { parse: [] } });
-    await msg.delete().catch(() => {});
-  }
-});
+  // Orijinal mesajı sil
+  await msg.delete().catch(() => {});
+}
 
 client.login(process.env.TOKEN);
