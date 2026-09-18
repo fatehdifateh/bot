@@ -1,0 +1,27 @@
+name: Discord Bot 7/24
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '*/15 * * * *' # Botun sürekli aktif kalmasını sağlar
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodları Çek
+        uses: actions/checkout@v4
+
+      - name: Node.js Kur
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Modülleri Yükle
+        run: npm install
+
+      - name: Botu Başlat
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+        run: node index.js
