@@ -69,20 +69,25 @@ async function processAttachments(attachments) {
   const linkler = [];
   for (const a of attachments) {
     try {
-      const buf = await downloadFile(a.url);
       const name = a.name || 'dosya';
       const isRar = name.toLowerCase().endsWith('.rar');
       const isZip = name.toLowerCase().endsWith('.zip');
-      if (isRar) {
-        const processed = await processRar(buf, packCounter);
-        files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
-        packCounter++; saveCounter();
-      } else if (isZip) {
-        const processed = await processZip(buf);
-        files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
-        packCounter++; saveCounter();
+
+      // RAR/ZIP ise indir ve işle
+      if (isRar || isZip) {
+        const buf = await downloadFile(a.url);
+        if (isRar) {
+          const processed = await processRar(buf, packCounter);
+          files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
+          packCounter++; saveCounter();
+        } else {
+          const processed = await processZip(buf);
+          files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
+          packCounter++; saveCounter();
+        }
       } else {
-        files.push({ attachment: buf, name });
+        // Video, resim, diğer — direkt URL olarak gönder
+        linkler.push(a.url);
       }
     } catch (e) {
       console.error('Dosya indirilemedi:', e.message);
