@@ -1,13 +1,20 @@
 name: Discord Bot 7/24
+
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' # Botun sürekli aktif kalmasını sağlar
+    - cron: '*/15 * * * *'
+
+concurrency:
+  group: discord-bot
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - name: Kodları Çek
         uses: actions/checkout@v4
