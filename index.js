@@ -1,6 +1,4 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { execSync } = require('child_process');
-const AdmZip = require('adm-zip');
 const fs = require('fs');
 
 const client = new Client({
@@ -12,43 +10,10 @@ const client = new Client({
 });
 
 const KANAL_ID = '';
-const DISCORD_LINK = 'https://discord.gg/EMPU2dbcpt';
-const COMMENT_TEXT = `nosignalpack\n${DISCORD_LINK}`;
-const COUNTER_FILE = 'counter.txt';
-
-let packCounter = 1;
-if (fs.existsSync(COUNTER_FILE)) {
-  packCounter = parseInt(fs.readFileSync(COUNTER_FILE, 'utf8').trim()) || 1;
-}
-function saveCounter() {
-  fs.writeFileSync(COUNTER_FILE, packCounter.toString());
-}
 
 client.once('ready', () => {
   console.log(`✅ ${client.user.tag} giriş yaptı!`);
 });
-
-async function processRar(buffer, num) {
-  const tempPath = `/tmp/nosignalpack${num}_in.rar`;
-  const commentPath = `/tmp/comment${num}.txt`;
-  fs.writeFileSync(tempPath, buffer);
-  fs.writeFileSync(commentPath, COMMENT_TEXT);
-  try {
-    execSync(`rar c -z"${commentPath}" "${tempPath}"`, { stdio: 'pipe' });
-  } catch (e) {
-    console.error('RAR comment hatası:', e.message);
-  }
-  const result = fs.readFileSync(tempPath);
-  fs.unlinkSync(tempPath);
-  fs.unlinkSync(commentPath);
-  return result;
-}
-
-async function processZip(buffer) {
-  const zip = new AdmZip(buffer);
-  zip.addZipComment(COMMENT_TEXT);
-  return zip.toBuffer();
-}
 
 async function downloadFile(url) {
   const res = await fetch(url);
@@ -64,80 +29,45 @@ function chunkArray(arr, size) {
   return chunks;
 }
 
-async function processAttachments(attachments) {
-  const files = [];
-  const linkler = [];
-  for (const a of attachments) {
-    try {
-      const name = a.name || 'dosya';
-      const isRar = name.toLowerCase().endsWith('.rar');
-      const isZip = name.toLowerCase().endsWith('.zip');
+async function forwardMessage(channel, m) {
+  try {
+    const content = m.content || undefined;
+    const attachments = [...m.attachments.values()];
+    const MAX_SIZE = 25 * 1024 * 1024;
 
-      // RAR/ZIP ise indir ve işle
-      if (isRar || isZip) {
+    const files = [];
+    for (const a of attachments) {
+      if (a.size && a.size > MAX_SIZE) {
+        console.log(`⚠️ Atlandı: ${a.name} (${(a.size/1024/1024).toFixed(1)}MB)`);
+        continue;
+      }
+      try {
         const buf = await downloadFile(a.url);
-        if (isRar) {
-          const processed = await processRar(buf, packCounter);
-          files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
-          packCounter++; saveCounter();
-        } else {
-          const processed = await processZip(buf);
-          files.push({ attachment: processed, name: `nosignalpack${packCounter}.zip` });
-          packCounter++; saveCounter();
-        }
-      } else {
-        // Video, resim, diğer — direkt URL olarak gönder
-        linkler.push(a.url);
+        files.push({ attachment: buf, name: a.name || 'dosya' });
+      } catch (e) {
+        console.error('Dosya indirilemedi:', e.message);
       }
-    } catch (e) {
-      console.error('Dosya indirilemedi:', e.message);
-      linkler.push(a.url);
     }
-  }
-  return { files, linkler };
-}
 
-async function processMessage(msg) {
-  let content = msg.content || '';
-  let attachments = [...msg.attachments.values()];
+    const chunks = chunkArray(files, 10);
 
-  // İletilen mesaj kontrolü
-  if (msg.messageReference && attachments.length === 0 && !content) {
-    try {
-      const ref = await msg.channel.messages.fetch(msg.messageReference.messageId);
-      if (ref) {
-        if (!content) content = ref.content || '';
-        if (attachments.length === 0) attachments = [...ref.attachments.values()];
+    if (chunks.length === 0) {
+      if (content) {
+        await channel.send({ content, allowedMentions: { parse: [] } });
       }
-    } catch (e) {
-      console.error('İletilen mesaj alınamadı:', e.message);
+    } else {
+      for (let i = 0; i < chunks.length; i++) {
+        await channel.send({
+          content: i === 0 ? content : undefined,
+          files: chunks[i],
+          allowedMentions: { parse: [] },
+        });
+      }
     }
-  }
 
-  // messageSnapshots deneme
-  if (attachments.length === 0 && msg.messageSnapshots && msg.messageSnapshots.size > 0) {
-    const snapshot = msg.messageSnapshots.first();
-    if (!content) content = snapshot.content || '';
-    if (snapshot.attachments && snapshot.attachments.size > 0) {
-      attachments = [...snapshot.attachments.values()];
-    }
-  }
-
-  return { content, attachments };
-}
-
-async function sendFilesInChunks(channel, metin, files) {
-  const chunks = chunkArray(files, 10);
-  if (chunks.length === 0) {
-    if (metin) await channel.send({ content: metin.slice(0, 2000), allowedMentions: { parse: [] } });
-    return;
-  }
-  for (let i = 0; i < chunks.length; i++) {
-    await channel.send({
-      content: i === 0 ? (metin.slice(0, 2000) || undefined) : undefined,
-      files: chunks[i],
-      allowedMentions: { parse: [] },
-    });
+    await m.delete().catch(() => {});
+  } catch (e) {
+    console.error('İletme hatası:', e.message);
   }
 }
 
@@ -174,35 +104,19 @@ client.on('messageCreate', async (msg) => {
       .slice(0, count)
       .reverse();
     for (const m of nonBotMsgs) {
-      const content = m.content || '';
-      const attachments = [...m.attachments.values()];
-      const { files, linkler } = await processAttachments(attachments);
-      const metin = [content, ...linkler].filter(Boolean).join('\n');
-      await m.delete().catch(() => {});
-      if (metin || files.length > 0) {
-        await sendFilesInChunks(msg.channel, metin, files);
-      }
+      await forwardMessage(msg.channel, m);
     }
     return;
   }
 
   // ==========================================
-  // Normal mesaj
+  // Normal mesaj - ilet
   // ==========================================
-  const { content, attachments } = await processMessage(msg);
+  const content = msg.content || '';
+  const attachments = [...msg.attachments.values()];
   if (!content && attachments.length === 0) return;
 
-  const { files, linkler } = await processAttachments(attachments);
-  const metin = [content, ...linkler].filter(Boolean).join('\n');
-
-  if (!metin && files.length === 0) return;
-
-  try {
-    await sendFilesInChunks(msg.channel, metin, files);
-    await msg.delete();
-  } catch (e) {
-    console.error('Gönderim hatası:', e.message);
-  }
+  await forwardMessage(msg.channel, msg);
 });
 
 client.login(process.env.TOKEN);
