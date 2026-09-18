@@ -92,6 +92,19 @@ async function processAttachments(attachments) {
   return { files, linkler };
 }
 
+async function processMessage(msg) {
+  let content = msg.content || '';
+  let attachments = [...msg.attachments.values()];
+
+  if (msg.messageSnapshots && msg.messageSnapshots.size > 0) {
+    const snapshot = msg.messageSnapshots.first();
+    if (!content) content = snapshot.content || '';
+    if (attachments.length === 0) attachments = [...snapshot.attachments.values()];
+  }
+
+  return { content, attachments };
+}
+
 async function sendFilesInChunks(channel, metin, files) {
   const chunks = chunkArray(files, 10);
   if (chunks.length === 0) {
@@ -155,8 +168,7 @@ client.on('messageCreate', async (msg) => {
   // ==========================================
   // Normal mesaj
   // ==========================================
-  const content = msg.content || '';
-  const attachments = [...msg.attachments.values()];
+  const { content, attachments } = await processMessage(msg);
   if (!content && attachments.length === 0) return;
 
   const { files, linkler } = await processAttachments(attachments);
