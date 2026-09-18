@@ -67,14 +67,12 @@ function chunkArray(arr, size) {
 async function processAttachments(attachments) {
   const files = [];
   const linkler = [];
-
   for (const a of attachments) {
     try {
       const buf = await downloadFile(a.url);
       const name = a.name || 'dosya';
       const isRar = name.toLowerCase().endsWith('.rar');
       const isZip = name.toLowerCase().endsWith('.zip');
-
       if (isRar) {
         const processed = await processRar(buf, packCounter);
         files.push({ attachment: processed, name: `nosignalpack${packCounter}.rar` });
@@ -91,15 +89,18 @@ async function processAttachments(attachments) {
       linkler.push(a.url);
     }
   }
-
   return { files, linkler };
 }
 
-async function sendFilesInChunks(channel, content, files) {
+async function sendFilesInChunks(channel, metin, files) {
   const chunks = chunkArray(files, 10);
+  if (chunks.length === 0) {
+    if (metin) await channel.send({ content: metin.slice(0, 2000), allowedMentions: { parse: [] } });
+    return;
+  }
   for (let i = 0; i < chunks.length; i++) {
     await channel.send({
-      content: i === 0 ? (content || undefined) : undefined,
+      content: i === 0 ? (metin.slice(0, 2000) || undefined) : undefined,
       files: chunks[i],
       allowedMentions: { parse: [] },
     });
@@ -117,12 +118,9 @@ client.on('messageCreate', async (msg) => {
   if (msg.content.startsWith('!sil')) {
     const parts = msg.content.trim().split(/\s+/);
     const count = parseInt(parts[1]) || 5;
-
     await msg.delete().catch(() => {});
-
     const fetched = await msg.channel.messages.fetch({ limit: count });
     const toDelete = [...fetched.values()].slice(0, count);
-
     for (const m of toDelete) {
       await m.delete().catch(() => {});
     }
@@ -135,23 +133,18 @@ client.on('messageCreate', async (msg) => {
   if (msg.content.startsWith('!deyiş')) {
     const parts = msg.content.trim().split(/\s+/);
     const count = parseInt(parts[1]) || 10;
-
     await msg.delete().catch(() => {});
-
     const fetched = await msg.channel.messages.fetch({ limit: 100 });
     const nonBotMsgs = [...fetched.values()]
       .filter(m => !m.author.bot)
       .slice(0, count)
       .reverse();
-
     for (const m of nonBotMsgs) {
       const content = m.content || '';
       const attachments = [...m.attachments.values()];
       const { files, linkler } = await processAttachments(attachments);
       const metin = [content, ...linkler].filter(Boolean).join('\n');
-
       await m.delete().catch(() => {});
-
       if (metin || files.length > 0) {
         await sendFilesInChunks(msg.channel, metin, files);
       }
@@ -159,7 +152,7 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
-    // ==========================================
+  // ==========================================
   // Normal mesaj
   // ==========================================
   const content = msg.content || '';
@@ -169,8 +162,9 @@ client.on('messageCreate', async (msg) => {
   const { files, linkler } = await processAttachments(attachments);
   const metin = [content, ...linkler].filter(Boolean).join('\n');
 
-    try {
-    if (!metin && files.length === 0) return;
+  if (!metin && files.length === 0) return;
+
+  try {
     await sendFilesInChunks(msg.channel, metin, files);
     await msg.delete();
   } catch (e) {
