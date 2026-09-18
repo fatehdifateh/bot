@@ -96,10 +96,26 @@ async function processMessage(msg) {
   let content = msg.content || '';
   let attachments = [...msg.attachments.values()];
 
-  if (msg.messageSnapshots && msg.messageSnapshots.size > 0) {
+  // İletilen mesaj kontrolü
+  if (msg.messageReference && attachments.length === 0 && !content) {
+    try {
+      const ref = await msg.channel.messages.fetch(msg.messageReference.messageId);
+      if (ref) {
+        if (!content) content = ref.content || '';
+        if (attachments.length === 0) attachments = [...ref.attachments.values()];
+      }
+    } catch (e) {
+      console.error('İletilen mesaj alınamadı:', e.message);
+    }
+  }
+
+  // messageSnapshots deneme
+  if (attachments.length === 0 && msg.messageSnapshots && msg.messageSnapshots.size > 0) {
     const snapshot = msg.messageSnapshots.first();
     if (!content) content = snapshot.content || '';
-    if (attachments.length === 0) attachments = [...snapshot.attachments.values()];
+    if (snapshot.attachments && snapshot.attachments.size > 0) {
+      attachments = [...snapshot.attachments.values()];
+    }
   }
 
   return { content, attachments };
