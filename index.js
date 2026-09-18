@@ -159,7 +159,7 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
-  // ==========================================
+    // ==========================================
   // Normal mesaj
   // ==========================================
   const content = msg.content || '';
@@ -169,14 +169,12 @@ client.on('messageCreate', async (msg) => {
   const { files, linkler } = await processAttachments(attachments);
   const metin = [content, ...linkler].filter(Boolean).join('\n');
 
-  try {
+    try {
+    if (!metin && files.length === 0) return;
     await sendFilesInChunks(msg.channel, metin, files);
     await msg.delete();
   } catch (e) {
     console.error('Gönderim hatası:', e.message);
-    const yedek = [content, ...attachments.map(a => a.url)].filter(Boolean).join('\n');
-    await msg.channel.send({ content: yedek.slice(0, 2000), allowedMentions: { parse: [] } });
-    await msg.delete().catch(() => {});
   }
 });
 
