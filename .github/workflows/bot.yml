@@ -5,11 +5,11 @@ on:
     branches: [ main ]
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'
 
 concurrency:
   group: discord-bot
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: true
 
 jobs:
   run-bot:
