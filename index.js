@@ -11,8 +11,8 @@ const client = new Client({
 
 // ---------------- AYARLAR ----------------
 const KANAL_ID = '';        // boş = tüm kanallar
-const OTOMATIK = false;     // true = her mesajı kendiliğinden işler, false = sadece !deyiş komutuyla
-const MAX_ADET = 10;        // !deyiş ile en fazla kaç mesaj
+const OTOMATIK = true;     // true = her mesajı kendiliğinden işler, false = sadece !deyiş komutuyla
+const MAX_ADET = 15;        // !deyiş ile en fazla kaç mesaj
 
 // Ad değiştirme modu: 'onek' | 'sabit' | 'degistir'
 const MOD = 'onek';
