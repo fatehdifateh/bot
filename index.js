@@ -11,18 +11,12 @@ const client = new Client({
 
 // ---------------- AYARLAR ----------------
 const KANAL_ID = '';        // boş = tüm kanallar
-const OTOMATIK = true;     // true = her mesajı kendiliğinden işler, false = sadece !deyiş komutuyla
-const MAX_ADET = 15;        // !deyiş ile en fazla kaç mesaj
+const OTOMATIK = true;      // true = her mesajı kendiliğinden işler, !deyiş de çalışır
+const MAX_ADET = 10;        // !deyiş ile en fazla kaç mesaj
 
-// Ad değiştirme modu: 'onek' | 'sabit' | 'degistir'
-const MOD = 'onek';
-const ONEK = 'NS_';
-const SABIT = 'NoSignal';
-const ESKI_KELIME = 'foxpack';
-const YENI_KELIME = 'nosignal';
-
+const AD = 'nosignalpack';  // yeni ad: nosignalpack4821.rar
 const ADI_DEGISENLER = ['.rar', '.zip'];
-const RENAME_LIMIT = 25 * 1024 * 1024; // 25 MB
+const RENAME_LIMIT = 25 * 1024 * 1024; // 25 MB altı değişir
 // -----------------------------------------
 
 client.once('ready', () => {
@@ -38,24 +32,9 @@ function arsivMi(a) {
   return ADI_DEGISENLER.includes(uzantiAl(a.name || ''));
 }
 
-function yeniAd(eski, sira, toplamArsiv) {
-  const n = eski.lastIndexOf('.');
-  const govde = n > 0 ? eski.slice(0, n) : eski;
-  const uzanti = n > 0 ? eski.slice(n) : '';
-
-  if (MOD === 'onek') return ONEK + govde + uzanti;
-  if (MOD === 'sabit') return SABIT + (toplamArsiv > 1 ? `_${sira}` : '') + uzanti;
-  if (MOD === 'degistir') {
-    const kacis = ESKI_KELIME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return govde.replace(new RegExp(kacis, 'gi'), YENI_KELIME) + uzanti;
-  }
-  return eski;
-}
-
 async function dosyalariHazirla(liste) {
-  const arsivSayisi = liste.filter(arsivMi).length;
-  let sira = 0;
   const files = [];
+  const kullanilan = new Set();
 
   for (const a of liste) {
     const res = await fetch(a.url);
@@ -64,8 +43,14 @@ async function dosyalariHazirla(liste) {
     let isim = a.name || a.url.split('?')[0].split('/').pop() || 'dosya';
 
     if (arsivMi(a)) {
-      sira++;
-      isim = yeniAd(isim, sira, arsivSayisi);
+      const uzanti = uzantiAl(isim);
+      let yeni;
+      do {
+        const sayi = Math.floor(1000 + Math.random() * 9000); // 1000-9999
+        yeni = `${AD}${sayi}${uzanti}`;
+      } while (kullanilan.has(yeni));
+      kullanilan.add(yeni);
+      isim = yeni;
     }
     files.push({ attachment: buf, name: isim });
   }
@@ -154,8 +139,8 @@ client.on('messageCreate', async (msg) => {
       const son = await msg.channel.messages.fetch({ limit: 50, before: msg.id });
       const hedefler = [...son.values()]
         .filter((m) => !m.author.bot && !KOMUT.test(m.content.trim()))
-        .slice(0, adet) // en yeniden geriye doğru adet kadar
-        .reverse();     // eskiden yeniye işle, sıra bozulmasın
+        .slice(0, adet)
+        .reverse();
 
       if (hedefler.length === 0) {
         const uyari = await msg.channel.send('İşlenecek mesaj bulunamadı.');
@@ -169,7 +154,6 @@ client.on('messageCreate', async (msg) => {
       hataYaz('!deyiş hatası', err);
     }
 
-    // Komut mesajını sil
     try {
       await msg.delete();
     } catch (err) {
