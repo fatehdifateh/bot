@@ -105,4 +105,4 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   }
 });
 
-client.login('BOTUNUN_TOKENI');
+client.login(process.env.TOKEN);
