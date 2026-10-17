@@ -1,9 +1,12 @@
 {
-  "name": "discord-bot",
+  "name": "fivem-isim-botu",
   "version": "1.0.0",
+  "description": "FiveM Sunucuları için İsim Onay Botu",
   "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "discord.js": "^14.0.0",
-    "adm-zip": "^0.5.10"
+    "discord.js": "^14.14.1"
   }
 }
