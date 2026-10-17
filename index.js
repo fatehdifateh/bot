@@ -1,87 +1,108 @@
-const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
+const {
+  Client,
+  Events,
+  GatewayIntentBits,
+  PermissionFlagsBits,
+  Partials,
+} = require('discord.js');
 
-// Botun sunucudaki mesajları, tepkileri ve üyeleri görebilmesi için gerekli izinler (Intents)
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildMembers
-    ]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildMembers,
+  ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
-// Ayarlar
-const AYARLAR = {
-    // İsimlerin yazılacağı kanalın ID'sini buraya gir (İsteğe bağlı - tüm sunucuda çalışmaması için)
-    // Eğer her kanalda çalışsın istiyorsan bu kısmı boş bırakabilirsin
-    ISIM_KANAL_ID: "KANAL_ID_BURAYA", 
-};
+// Onay emojileri: standart unicode, özel emoji ismi veya özel emoji ID'si
+const ONAY_UNICODE = ['✅', '✔️', '☑️'];
+const ONAY_OZEL_ISIMLER = ['white_check_mark', 'onay', 'check']; // özel emoji isimleri (kendine göre düzenle)
+const ONAY_OZEL_IDLER = []; // örn: ['123456789012345678']
 
-client.once('ready', () => {
-    console.log(`${client.user.tag} aktif! FiveM isim onay sistemi hazır.`);
+// Aynı mesajın tekrar işlenmesini önlemek için
+const islenenMesajlar = new Set();
+
+function onayEmojisiMi(emoji) {
+  if (emoji.id) {
+    // Özel emoji
+    return (
+      ONAY_OZEL_IDLER.includes(emoji.id) ||
+      ONAY_OZEL_ISIMLER.includes(emoji.name)
+    );
+  }
+  // Standart unicode emoji
+  return ONAY_UNICODE.includes(emoji.name);
+}
+
+client.once(Events.ClientReady, (c) => {
+  console.log(`${c.user.tag} aktif!`);
 });
 
-// Tepki eklendiğinde tetiklenen fonksiyon
-client.on('messageReactionAdd', async (reaction, user) => {
-    // Botun kendi tepkilerini veya kısmi (partial) mesajları engellemek için kontrol
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  try {
     if (user.bot) return;
-    if (reaction.partial) {
-        try {
-            await reaction.fetch();
-        } catch (error) {
-            console.error('Mesaj çekilirken hata oluştu:', error);
-            return;
-        }
-    }
 
-    // Sadece beyaz onay işareti (✅) atıldığında çalışsın
-    if (reaction.emoji.name !== '✅' && reaction.emoji.name !== 'white_check_mark') return;
+    // Partial tepki ve mesajı tam olarak getir
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
 
-    const guild = reaction.message.guild;
+    if (!onayEmojisiMi(reaction.emoji)) return;
+
+    const message = reaction.message;
+    const guild = message.guild;
     if (!guild) return;
 
-    // Tepkiyi atan yetkilinin sunucudaki üye (member) verisini çekiyoruz
+    if (!message.author || message.author.bot) return;
+
+    // Aynı mesaj daha önce işlendiyse tekrar yapma
+    if (islenenMesajlar.has(message.id)) return;
+
+    // Yetkiyi kontrol et
     const moderator = await guild.members.fetch(user.id);
-
-    // Tepkiyi atan kişinin "Takma Adları Yönet" (Manage Nicknames) yetkisi var mı kontrolü
     if (!moderator.permissions.has(PermissionFlagsBits.ManageNicknames)) {
-        // Yetkisi yoksa tepkisini kaldır ve işlem yapma
-        try {
-            await reaction.users.remove(user.id);
-        } catch (e) { console.log("Tepki silinemedi, yetki eksik olabilir.") }
-        return;
+      console.log(`[Yetkisiz] ${user.tag} onay vermeye çalıştı.`);
+      await reaction.users.remove(user.id).catch(() => {});
+      return;
     }
 
-    // Belirli bir kanal ayarlandıysa sadece o kanalda çalışmasını sağla
-    if (AYARLAR.ISIM_KANAL_ID && AYARLAR.ISIM_KANAL_ID !== "KANAL_ID_BURAYA") {
-        if (reaction.message.channel.id !== AYARLAR.ISIM_KANAL_ID) return;
+    // Kendi mesajını onaylamayı engelle
+    if (moderator.id === message.author.id) {
+      console.log(`[Engellendi] ${user.tag} kendi mesajını onaylamaya çalıştı.`);
+      await reaction.users.remove(user.id).catch(() => {});
+      return;
     }
 
-    // Mesajı yazan (oyuncu) üye bilgisini çekiyoruz
-    const targetUserId = reaction.message.author.id;
-    try {
-        const targetMember = await guild.members.fetch(targetUserId);
-        const yeniIsim = reaction.message.content; // Oyuncunun chate yazdığı metin
+    const yeniIsim = (message.content || '').trim();
 
-        // Discord'da isim sınırı 32 karakterdir, bunu kontrol ediyoruz
-        if (yeniIsim.length > 32) {
-            reaction.message.reply(`❌ Yazılan isim 32 karakterden uzun olduğu için değiştirilemedi.`);
-            return;
-        }
-
-        // Oyuncunun ismini chate yazdığı şey ile değiştiriyoruz
-        await targetMember.setNickname(yeniIsim);
-        
-        // Başarılı olduğunda chate bilgi mesajı atar
-        reaction.message.reply(`✅ İsim onaylandı! Yeni isim: **${yeniIsim}** (Onaylayan: ${user.username})`);
-
-    } catch (error) {
-        console.error("İsim değiştirilirken hata oluştu:", error);
-        // Botun rol sırası oyuncudan/yetkiliden düşükse veya bot sunucu sahibine isim vermeye çalışıyorsa hata verir
-        reaction.message.reply(`❌ İsim değiştirilemedi. Botun rolünün üst sırada olduğundan ve yetkilerinin tam olduğundan emin olun.`);
+    if (!yeniIsim) {
+      console.log('[Atlandı] Mesaj içeriği boş (Message Content Intent kapalı olabilir).');
+      return;
     }
+    if (yeniIsim.length > 32) {
+      await message.reply('❌ İsim 32 karakterden uzun olamaz.').catch(() => {});
+      return;
+    }
+
+    const targetMember = await guild.members.fetch(message.author.id);
+
+    if (!targetMember.manageable) {
+      await message.reply(
+        '❌ Bu kullanıcının takma adını değiştiremiyorum (rol hiyerarşisi veya sunucu sahibi).'
+      ).catch(() => {});
+      return;
+    }
+
+    await targetMember.setNickname(yeniIsim, `${user.tag} tarafından onaylandı`);
+    islenenMesajlar.add(message.id);
+
+    await message.reply(`✅ İsim onaylandı: **${yeniIsim}**`);
+    console.log(`[Başarılı] ${targetMember.user.tag} -> ${yeniIsim} (onaylayan: ${user.tag})`);
+  } catch (error) {
+    console.error('[Hata] İsim onay sisteminde sorun:', error);
+  }
 });
 
-// Discord Geliştirici Portalından aldığın Bot Tokenini buraya yapıştır
 client.login('BOTUNUN_TOKENI');
