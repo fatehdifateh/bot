@@ -36,7 +36,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     }
 
     // Sadece beyaz onay işareti (✅) atıldığında çalışsın
-    if (reaction.emoji.name !== '✅') return;
+    if (reaction.emoji.name !== '✅' && reaction.emoji.name !== 'white_check_mark') return;
 
     const guild = reaction.message.guild;
     if (!guild) return;
